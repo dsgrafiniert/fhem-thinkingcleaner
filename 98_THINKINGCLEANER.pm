@@ -56,67 +56,7 @@ sub THINKINGCLEANER_Initialize($)
     $hash->{GetFn}   = "THINKINGCLEANER_Get";
     $hash->{AttrFn}  = "THINKINGCLEANER_Attr";
     $hash->{AttrList} =
-      "reading[0-9]+Name " .    # new syntax for readings
-      "reading[0-9]+Regex " .
-      "reading[0-9]*Expr " .
-      "reading[0-9]*Map " .     # new feature
-      "reading[0-9]*Format " .  # new feature
-      
-      "readingsName.* " .       # old syntax
-      "readingsRegex.* " .
-      "readingsExpr.* " .
-     
-      "requestHeader.* " .  
-      "requestData.* " .
-      "reAuthRegex " .
-      "noShutdown:0,1 " .
-      
-      "timeout " .
-      "queueDelay " .
-      "queueMax " .
-      "minSendDelay " .
-      "showMatched:0,1 " .
-
-      "sid[0-9]*URL " .
-      "sid[0-9]*IDRegex " .
-      "sid[0-9]*Data.* " .
-      "sid[0-9]*Header.* " .
-      "sid[0-9]*IgnoreRedirects " .
-      
-      "set[0-9]+Name " .
-      "set[0-9]*URL " .
-      "set[0-9]*Data.* " .
-      "set[0-9]*Header.* " .
-      "set[0-9]+Min " .
-      "set[0-9]+Max " .
-      "set[0-9]+Map " .         # Umwandlung von Codes für das Gerät zu sprechenden Namen, z.B. "0:mittig, 1:oberhalb, 2:unterhalb"
-      "set[0-9]+Hint " .        # Direkte Fhem-spezifische Syntax für's GUI, z.B. "6,10,14" bzw. slider etc.
-      "set[0-9]+Expr " .
-      "set[0-9]*ReAuthRegex " .
-      "set[0-9]*NoArg " .       # don't expect a value - for set on / off and similar.
-      
-      "get[0-9]+Name " .
-      "get[0-9]*URL " .
-      "get[0-9]*Data.* " .
-      "get[0-9]*Header.* " .
-
-      "get[0-9]*URLExpr " .
-      "get[0-9]*DatExpr " .
-      "get[0-9]*HdrExpr " .
-
-      "get[0-9]+Poll " .        # Todo: warum geht bei wildcards kein :0,1 Anhang ? -> in fhem.pl nachsehen
-      "get[0-9]+PollDelay " .
-      "get[0-9]*Regex " .
-      "get[0-9]*Expr " .
-      "get[0-9]*Map " .
-      "get[0-9]*Format " .
-      "get[0-9]*CheckAllReadings " .
-      
-      "do_not_notify:1,0 " . 
-      "disable:0,1 " .
-      "enableControlSet:0,1 " .
-      "enableXPath:0,1 " .
-      "enableXPath-Strict:0,1 " .
+      "useCallback " .    # new syntax for readings
       $readingFnAttributes;  
 }
 
@@ -125,7 +65,7 @@ sub THINKINGCLEANER_addExtension($$) {
     my ( $name, $func ) = @_;
 
     my $url = "/$name";
-    Log3 $name, 2, "Registering THINKINGCLEANER WebHook $name ";
+    Log3 $name, 1, "Registering THINKINGCLEANER WebHook $name ";
     $data{FWEXT}{$url}{deviceName} = $name;
     $data{FWEXT}{$url}{FUNC}       = $func;
 }
@@ -136,7 +76,7 @@ sub THINKINGCLEANER_removeExtension($) {
 
     my $url  = "/$link";
     my $name = $data{FWEXT}{$url}{deviceName};
-    Log3 $name, 2, "Unregistering THINKINGCLEANER WebHook $name ";
+    Log3 $name, 1, "Unregistering THINKINGCLEANER WebHook $name ";
     delete $data{FWEXT}{$url};
 }
 
@@ -190,7 +130,7 @@ sub THINKINGCLEANER_Define($$)
         $hash->{TRIGGERTIME}     = $firstTrigger;
         $hash->{TRIGGERTIME_FMT} = FmtDateTime($firstTrigger);
         RemoveInternalTimer("update:$name");
-        InternalTimer($firstTrigger, "THINKINGCLEANER_GetUpdate", "update:$name", 0);
+        InternalTimer($firstTrigger, "THINKINGCLEANER_GetUpdate", $name, 0);
         Log3 $name, 5, "$name: InternalTimer set to call GetUpdate in 2 seconds for the first time";
     } else {
        $hash->{TRIGGERTIME} = 0;
@@ -229,83 +169,10 @@ THINKINGCLEANER_Attr(@)
     # readingsExpr, readingsRegex.* or reAuthRegex need validation though.
     
     if ($cmd eq "set") {        
-        if ($aName =~ "Regex") {    # catch all Regex like attributes
-            eval { qr/$aVal/ };
-            if ($@) {
-                Log3 $name, 3, "$name: Attr with invalid regex in attr $name $aName $aVal: $@";
-                return "Invalid Regex $aVal";
-            }
-        } elsif ($aName =~ "Expr") { # validate all Expressions
-            my $val = 1;
-            eval $aVal;
-            if ($@) {
-                Log3 $name, 3, "$name: Attr with invalid Expression in attr $name $aName $aVal: $@";
-                return "Invalid Expression $aVal";
-            }
-        } elsif ($aName eq "enableXPath") {
-            if(!eval("use HTML::TreeBuilder::XPath;1")) {
-                Log3 $name, 3, "$name: Please install HTML::TreeBuilder::XPath to use the xpath-Option";
-                return "Please install HTML::TreeBuilder::XPath to use the xpath-Option";
-            }
-        } elsif ($aName eq "enableXPath-Strict") {
-            if(!eval("use XML::XPath;use XML::XPath::XMLParser;1")) {
-                Log3 $name, 3, "$name: Please install XML::XPath and XML::XPath::XMLParser to use the xpath-strict-Option";
-                return "Please install XML::XPath and XML::XPath::XMLParser to use the xpath-strict-Option";
-            }
-        }
         addToDevAttrList($name, $aName);
     }
     return undef;
 }
-
-
-# create a new authenticated session
-#########################################################################
-sub THINKINGCLEANER_Auth($@)
-{
-    my ( $hash, @a ) = @_;
-    my $name = $hash->{NAME};
-
-    # get all steps
-    my %steps;
-    foreach my $attr (keys %{$attr{$name}}) {
-        if ($attr =~ "sid([0-9]+).+") {
-            $steps{$1} = 1;
-        }
-    }
-    Log3 $name, 4, "$name: Auth called with Steps: " . join (" ", sort keys %steps);
-
-    $hash->{sid} = "";
-    foreach my $step (sort keys %steps) {
-    
-        my ($url, $header, $data, $type, $retrycount, $ignoreredirects);
-        # hole alle Header bzw. generischen Header ohne Nummer 
-        $header = join ("\r\n", map ($attr{$name}{$_}, sort grep (/sid${step}Header/, keys %{$attr{$name}})));
-        if (length $header == 0) {
-            $header = join ("\r\n", map ($attr{$name}{$_}, sort grep (/sidHeader/, keys %{$attr{$name}})));
-        }
-        # hole Bestandteile der Post Data
-        $data = join ("\r\n", map ($attr{$name}{$_}, sort grep (/sid${step}Data/, keys %{$attr{$name}})));
-        if (length $data == 0) {
-            $data = join ("\r\n", map ($attr{$name}{$_}, sort grep (/sidData/, keys %{$attr{$name}})));
-        }
-        # hole URL
-        $url = AttrVal($name, "sid${step}URL", undef);
-        if (!$url) {
-            $url = AttrVal($name, "sidURL", undef);
-        }
-        $ignoreredirects = AttrVal($name, "sid${step}IgnoreRedirects", undef);
-        $retrycount      = 0;
-        $type            = "Auth$step";
-        if ($url) {
-            THINKINGCLEANER_AddToQueue($hash, $url, $header, $data, $type, $retrycount, $ignoreredirects);
-        } else {
-            Log3 $name, 3, "$name: no URL for $type";
-        }
-    }
-    return undef;
-}
-
 
 # put URL, Header, Data etc. in hash for HTTPUtils Get
 # for set with index $setNum
@@ -383,7 +250,7 @@ sub THINKINGCLEANER_Set($@)
                 RemoveInternalTimer("update:$name");    
                 $hash->{TRIGGERTIME} = $nextTrigger;
                 $hash->{TRIGGERTIME_FMT} = FmtDateTime($nextTrigger);
-                InternalTimer($nextTrigger, "THINKINGCLEANER_GetUpdate", "update:$name", 0);
+                InternalTimer($nextTrigger, "THINKINGCLEANER_GetUpdate", $name, 0);
                 Log3 $name, 3, "$name: timer interval changed to $hash->{Interval} seconds";
                 return undef;
             } elsif (int $setVal <= 5) {
@@ -392,10 +259,10 @@ sub THINKINGCLEANER_Set($@)
                 Log3 $name, 3, "$name: no interval (sec) specified in set, continuing with $hash->{Interval} (sec)";
             }
         } elsif ($setName eq 'reread') {
-            THINKINGCLEANER_GetUpdate("reread:$name");
+            THINKINGCLEANER_GetUpdate($name);
             return undef;
         } elsif ($setName eq 'stop') {
-            RemoveInternalTimer("update:$name");    
+            RemoveInternalTimer($name);    
             $hash->{TRIGGERTIME} = 0;
             $hash->{TRIGGERTIME_FMT} = "";
             Log3 $name, 3, "$name: internal interval timer stopped";
@@ -405,7 +272,7 @@ sub THINKINGCLEANER_Set($@)
             $hash->{TRIGGERTIME} = $nextTrigger;
             $hash->{TRIGGERTIME_FMT} = FmtDateTime($nextTrigger);
             RemoveInternalTimer("update:$name");
-            InternalTimer($nextTrigger, "THINKINGCLEANER_GetUpdate", "update:$name", 0);
+            InternalTimer($nextTrigger, "THINKINGCLEANER_GetUpdate", $name, 0);
             Log3 $name, 5, "$name: internal interval timer set to call GetUpdate in " . int($hash->{Interval}). " seconds";
             return undef;
         } 
@@ -627,19 +494,19 @@ sub THINKINGCLEANER_Get($@)
 ###################################
 sub THINKINGCLEANER_GetUpdate($)
 {
-    my ($calltype,$name) = split(':', $_[0]);
+    my $name = $_[0];
     my $hash = $defs{$name};
     my ($url, $header, $data, $type, $count);
     my $now = gettimeofday();
     
-    Log3 $name, 4, "$name: GetUpdate called ($calltype)";
+    Log3 $name, 1, "$name: GetUpdate called";
     
-    if ($calltype eq "update" && $hash->{Interval}) {
-        RemoveInternalTimer ("update:$name");
+    if ( $hash->{Interval}) {
+        RemoveInternalTimer ($name);
         my $nt = gettimeofday() + $hash->{Interval};
         $hash->{TRIGGERTIME}     = $nt;
         $hash->{TRIGGERTIME_FMT} = FmtDateTime($nt);
-        InternalTimer($nt, "THINKINGCLEANER_GetUpdate", "update:$name", 0);
+        InternalTimer($nt, "THINKINGCLEANER_GetUpdate", $name, 0);
         Log3 $name, 5, "$name: internal interval timer set to call GetUpdate again in " . int($hash->{Interval}). " seconds";
     }
     
@@ -660,139 +527,6 @@ sub THINKINGCLEANER_GetUpdate($)
         } else {
             Log3 $name, 3, "$name: no URL for $type";
         }
-    }
-
-    # check if additional readings with individual URLs need to be requested
-    foreach my $poll (sort grep (/^get[0-9]+Poll$/, keys %{$attr{$name}})) {
-        $poll =~ /^get([0-9]+)Poll$/;
-        next if (!$1);
-        my $getNum  = $1;
-        my $getName = AttrVal($name, "get".$getNum."Name", ""); 
-        if ($getName) {
-            Log3 $name, 5, "$name: GetUpdate checks if poll required for $getName ($getNum)";
-            my $lastPoll = 0;
-            $lastPoll = $hash->{lastpoll}{$getName} 
-                if ($hash->{lastpoll} && $hash->{lastpoll}{$getName});
-            my $dueTime = $lastPoll + AttrVal($name, "get".$getNum."PollDelay", 0);
-            if ($now >= $dueTime) {
-                Log3 $name, 5, "$name: GetUpdate will request $getName";
-                $hash->{lastpoll}{$getName} = $now;
-                
-                # hole alle Header bzw. generischen Header ohne Nummer 
-                $header = join ("\r\n", map ($attr{$name}{$_}, sort grep (/get${getNum}Header/, keys %{$attr{$name}})));
-                if (length $header == 0) {
-                    $header = join ("\r\n", map ($attr{$name}{$_}, sort grep (/getHeader/, keys %{$attr{$name}})));
-                }
-                # hole Bestandteile der Post data 
-                $data = join ("\r\n", map ($attr{$name}{$_}, sort grep (/get${getNum}Data/, keys %{$attr{$name}})));
-                if (length $data == 0) {
-                    $data = join ("\r\n", map ($attr{$name}{$_}, sort grep (/getData/, keys %{$attr{$name}})));
-                }
-                # hole URL
-                $url = AttrVal($name, "get${getNum}URL", undef);
-                if (!$url) {
-                    $url = AttrVal($name, "getURL", undef);
-                }
-                if (!$url) {
-                    $url = $hash->{MainURL} if ( $hash->{MainURL} ne "none" );
-                }
-
-                $type    = "Get$getNum";
-                if ($url) {
-                    THINKINGCLEANER_AddToQueue($hash, $url, $header, $data, $type); 
-                } else {
-                    Log3 $name, 3, "$name: no URL to get $type";
-                }
-            } else {
-                Log3 $name, 5, "$name: GetUpdate will skip $getName, delay not over";
-            }
-        }
-    }
-}
-
-
-# extract one reading for a buffer
-# and apply Expr, Map and Format
-###################################
-sub THINKINGCLEANER_ExtractReading($$$$$$$)
-{
-    my ($hash, $buffer, $reading, $regex, $expr, $map, $format) = @_;
-    my $name = $hash->{NAME};
-    my $val;
-    my $match;
-
-    if (AttrVal($name, "enableXPath", undef) && $regex =~ /^xpath:(.*)/) {
-        Log3 $name, 5, "$name: ExtractReading $reading with xpath $1 ...";
-        my $xpath = $1;
-        my $tree  = HTML::TreeBuilder::XPath->new;
-        my $html  = $buffer;
-        $html =~ s/.*?(\r\n){2}//s; # remove HTTP-header
-            
-        # if the xpath isn't syntactically correct, fhem would crash
-        # the use of eval prevents this from happening
-        $val = eval('
-            $tree->parse($html);
-            $val = join ",", $tree->findvalues($xpath);
-            $tree->delete();
-            $val;
-        ');
-        $match = $val;
-    } elsif (AttrVal($name, "enableXPath-Strict", undef) && $regex =~ /^xpath-strict:(.*)/) {
-        Log3 $name, 5, "$name: ExtractReading $reading with strict xpath $1 ...";
-        my $xpath = $1;
-        my $xml= $buffer;
-        $xml =~ s/.*?(\r\n){2}//s; # remove HTTP-header
-        
-        # if the xml isn't wellformed, fhem would crash
-        # the use of eval prevents this from happening
-        $val = eval('
-            my $xp = XML::XPath->new(xml => $xml);
-            my $nodeset = $xp->find($xpath);
-            my @vals;
-            foreach my $node ($nodeset->get_nodelist) {
-                push @vals, XML::XPath::XMLParser::as_string($node);
-            }
-            $val = join ",", @vals;
-            $xp->cleanup();
-            $val;
-        ');
-        $match = $val;
-    } else {
-        Log3 $name, 5, "$name: ExtractReading $reading with regex /$regex/...";
-        $match = ($buffer =~ /$regex/);
-        $val = $1 if ($match);
-    }
-    
-    if ($match) {
-        if ($expr) {
-            $val = eval $expr;
-            Log3 $name, 5, "$name: ExtractReading changed $reading with Expr $expr from $1 to $val";
-        }
-        
-        if ($map) {                                 # gibt es eine Map?
-            my %map = split (/, +|:/, $map);        # hash aus dem map string                   
-            if (defined($map{$val})) {              # Eintrag für den gelesenen Wert in der Map?
-                my $nVal = $map{$val};              # entsprechender sprechender Wert für den rohen Wert aus dem Gerät
-                Log3 $name, 5, "$name: ExtractReading found $val in map and converted to $nVal";
-                $val = $nVal;
-            } else {
-                Log3 $name, 3, "$name: ExtractReading cound not match $val to defined map";
-            }
-        }
-        
-        if ($format) {
-            Log3 $name, 5, "$name: ExtractReading for $reading does sprintf with format " . $format .
-                " value is $val";
-            $val = sprintf($format, $val);
-            Log3 $name, 5, "$name: ExtractReading for $reading sprintf result is $val";
-        }
-        
-        Log3 $name, 5, "$name: ExtractReading sets $reading to $val";
-        readingsBulkUpdate( $hash, $reading, $val );
-        return 1;
-    } else {
-        Log3 $name, 5, "$name: ExtractReading $reading did not match (val is >$val<)";
-        return 0;
     }
 }
 
@@ -830,96 +564,9 @@ sub THINKINGCLEANER_Read($$$)
     $hash->{BUSY} = 0;
     RemoveInternalTimer ($hash); # Remove remaining timeouts of HttpUtils (should be done in HttpUtils)
     
-    $hash->{HTTPHEADER} = "" if (!$hash->{HTTPHEADER});
-    $hash->{httpheader} = "" if (!$hash->{httpheader});
-    my $header = $hash->{HTTPHEADER} . $hash->{httpheader};
-    
-    if ($err) {
-        Log3 $name, 3, "$name: Read callback: request type was $type" . 
-             ($header ? ",\r\nheader: $header" : ", no headers") . 
-             ($buffer ? ",\r\nbuffer: $buffer" : ", buffer empty") . 
-             ($err ? ", \r\nError $err" : "");
-        return;
-    }
-    
-    Log3 $name, 5, "$name: Read Callback: Request type was $type" .
-             ($header ? ",\r\nheader: $header" : ", no headers") . 
-             ($buffer ? ",\r\nbuffer: $buffer" : ", buffer empty");
-    
-    		my $perl_scalar = decode_json $buffer;
+	my $perl_scalar = decode_json $buffer;
 
-    $buffer = $header . "\r\n\r\n" . $buffer if ($header);
-    
-    $type =~ "(Auth|Set|Get)(.*)";
-    my $num = $2;
-    
-    if ($type =~ "Auth") {
-        # Doing Authentication step -> extract sid
-        if (AttrVal($name, "sid${num}IDRegex", undef)) {
-            if ($buffer =~ AttrVal($name, "sid1IDRegex", undef)) {
-                $hash->{sid} = $1;
-                Log3 $name, 5, "$name: Read set sid to $hash->{sid}";
-            } else {
-                Log3 $name, 5, "$name: Read could not match buffer to IDRegex " .
-                     AttrVal($name, "sid${num}IDRegex", undef);
-            }
-        }
-        return undef;
-    } else {
-        # not in Auth, so check if Auth is necessary
-        my $ReAuthRegex;
-        if ($type =~ "Set") {
-            $ReAuthRegex = AttrVal($name, "set${num}ReAuthRegex", AttrVal($name, "setReAuthRegex", undef));
-        } else {
-            $ReAuthRegex = AttrVal($name, "reAuthRegex", undef);
-        }
-        if ($ReAuthRegex) {
-            Log3 $name, 5, "$name: Read is checking response with ReAuthRegex $ReAuthRegex";
-            if ($buffer =~ $ReAuthRegex) {
-                Log3 $name, 4, "$name: Read decided new authentication required";
-                if ($request->{retryCount} < 1) {
-                    THINKINGCLEANER_Auth $hash;
-                    $request->{retryCount}++;
-                    Log3 $name, 4, "$name: Read is requeuing request $type after Auth, retryCount $request->{retryCount} ...";
-                    THINKINGCLEANER_AddToQueue ($hash, $request->{url}, $request->{header}, 
-                            $request->{data}, $request->{type}, $request->{retryCount}); 
-                    return undef;
-                } else {
-                    Log3 $name, 4, "$name: Read has no more retries left - did authentication fail?";
-                }
-            }
-        }
-    }
-    
-    return undef if ($type =~ "Set");
-    
-    my $checkAll  = 0;  
-    my $unmatched = "";
-    my $matched   = "";
-    my ($reading, $regex, $expr, $map, $format);
-    readingsBeginUpdate($hash);
-    
-    if ($type =~ "Get") {
-        $checkAll = AttrVal($name, "get" . $num . "CheckAllReadings", 0);
-        $reading  = $attr{$name}{"get" . $num . "Name"};
-        $regex    = THINKINGCLEANER_GetFAttr($name, "get", $num, "Regex");
-        Log3 $name, 5, "$name: Read is extracting Reading with $regex from HTTP Response to $type";
-        if (!$regex) {
-            $checkAll = 1;
-        } else {
-            $expr    = THINKINGCLEANER_GetFAttr($name, "get", $num, "Expr");
-            $map     = THINKINGCLEANER_GetFAttr($name, "get", $num, "Map");
-            $format  = THINKINGCLEANER_GetFAttr($name, "get", $num, "Format");
-            if (THINKINGCLEANER_ExtractReading($hash, $buffer, $reading, $regex, $expr, $map, $format)) {
-                $matched = ($matched ? "$matched $reading" : "$reading");
-            } else {
-                $unmatched = ($unmatched ? "$unmatched $reading" : "$reading");
-            }
-        }
-    }
-    
-    if (($type eq "Update") || ($checkAll)) {
-		 for my $key ( keys $perl_scalar ) {
+    for my $key ( keys $perl_scalar ) {
 			my $value = $perl_scalar->{$key};
 			if (ref($value) eq "HASH") {
 				for my $subkey ( keys $value ) {
@@ -930,23 +577,8 @@ sub THINKINGCLEANER_Read($$$)
 			} else {
 				readingsBulkUpdate( $hash, $key, $value );
 			}
-		}
-       
-    }
-    if ($type =~ "(Update|Get)") {
-        if (!$matched) {
-            readingsBulkUpdate( $hash, "MATCHED_READINGS", "")
-                if (AttrVal($name, "showMatched", undef));
-            Log3 $name, 3, "$name: Read response to $type didn't match any Reading(s)";
-        } else {
-            readingsBulkUpdate( $hash, "MATCHED_READINGS", $matched)
-                if (AttrVal($name, "showMatched", undef));
-            Log3 $name, 4, "$name: Read response to $type matched Reading(s) $matched";
-            Log3 $name, 4, "$name: Read response to $type did not match $unmatched" if ($unmatched);
-        }
-    }
-    readingsEndUpdate( $hash, 1 );
-    THINKINGCLEANER_HandleSendQueue("direct:".$name);
+	}
+    
     return undef;
 }
 
@@ -1074,297 +706,8 @@ THINKINGCLEANER_AddToQueue($$$$$;$$$){
 ###################################
 sub THINKINGCLEANER_CGI() {
 
-# THINKINGCLEANER
-# /$infix?device=UUIDdev&id=UUIDloc&latitude=xx.x&longitude=xx.x&trigger=(enter|exit)
-	Log3 "ThinkingCleaner_CLI", 3, "WebHook called";
-
-# Geofency
-# /$infix?id=UUIDloc&name=locName&entry=(1|0)&date=DATE&latitude=xx.x&longitude=xx.x&device=UUIDdev
-    my ($request) = @_;
-    my $hash;
-    my $name    = "";
-    my $link    = "";
-    my $URI     = "";
-    my $device  = "";
-    my $id      = "";
-    my $lat     = "";
-    my $long    = "";
-    my $entry   = "";
-    my $msg     = "";
-    my $date    = "";
-    my $time    = "";
-    my $locName = "";
-	Log3 $name."_CLI", 3, sprintf("%f", $request);
-
-    # data received
-    if ( $request =~ m,^(/[^/]+?)(?:\&|\?)(.*)?$, ) {
-        $link = $1;
-        $URI  = $2;
-
-        # get device name
-        $name = $data{FWEXT}{$link}{deviceName} if ( $data{FWEXT}{$link} );
-
-        # return error if no such device
-        return ( "text/plain; charset=utf-8",
-            "NOK No THINKINGCLEANER device for webhook $link" )
-          unless ($name);
-
-        # extract values from URI
-        my $webArgs;
-        foreach my $pv ( split( "&", $URI ) ) {
-            next if ( $pv eq "" );
-            $pv =~ s/\+/ /g;
-            $pv =~ s/%([\dA-F][\dA-F])/chr(hex($1))/ige;
-            my ( $p, $v ) = split( "=", $pv, 2 );
-
-            $webArgs->{$p} = $v;
-        }
-
-        # validate id
-        return ( "text/plain; charset=utf-8",
-            "NOK Expected value for 'id' cannot be empty" )
-          if ( !defined( $webArgs->{id} ) || $webArgs->{id} eq "" );
-
-        return ( "text/plain; charset=utf-8",
-            "NOK No whitespace allowed in id '" . $webArgs->{id} . "'" )
-          if ( defined( $webArgs->{id} ) && $webArgs->{id} =~ m/(?:\s)/ );
-
-        # validate locName
-        return ( "text/plain; charset=utf-8",
-            "NOK No whitespace allowed in id '" . $webArgs->{locName} . "'" )
-          if ( defined( $webArgs->{locName} )
-            && $webArgs->{locName} =~ m/(?:\s)/ );
-
-        # require entry or trigger
-        return ( "text/plain; charset=utf-8",
-            "NOK Neither 'entry' nor 'trigger' was specified" )
-          if ( !defined( $webArgs->{entry} )
-            && !defined( $webArgs->{trigger} ) );
-
-        # validate entry
-        return ( "text/plain; charset=utf-8",
-            "NOK Expected value for 'entry' cannot be empty" )
-          if ( defined( $webArgs->{entry} ) && $webArgs->{entry} eq "" );
-
-        return ( "text/plain; charset=utf-8",
-            "NOK Value for 'entry' can only be: 1 0" )
-          if ( defined( $webArgs->{entry} )
-            && $webArgs->{entry} ne 0
-            && $webArgs->{entry} ne 1 );
-
-        # validate trigger
-        return ( "text/plain; charset=utf-8",
-            "NOK Expected value for 'trigger' cannot be empty" )
-          if ( defined( $webArgs->{trigger} ) && $webArgs->{trigger} eq "" );
-
-        return ( "text/plain; charset=utf-8",
-            "NOK Value for 'trigger' can only be: enter|test exit" )
-          if ( defined( $webArgs->{trigger} )
-            && $webArgs->{trigger} ne "enter"
-            && $webArgs->{trigger} ne "test"
-            && $webArgs->{trigger} ne "exit" );
-
-        # validate date
-        return (
-            "text/plain; charset=utf-8",
-            "NOK Specified date '"
-              . $webArgs->{date} . "'"
-              . " does not match ISO8601 UTC format (1970-01-01T00:00:00Z)"
-          )
-          if ( defined( $webArgs->{date} )
-            && $webArgs->{date} !~
-m/(19|20)\d\d-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([0-1][0-9]|2[0-3]):([0-5][0-9]):([0-5][0-9])Z/
-          );
-
-        # validate locName
-        return ( "text/plain; charset=utf-8",
-            "NOK No whitespace allowed in id '" . $webArgs->{locName} . "'" )
-          if ( defined( $webArgs->{locName} )
-            && $webArgs->{locName} =~ m/(?:\s)/ );
-
-        # validate LAT
-        return (
-            "text/plain; charset=utf-8",
-            "NOK Specified latitude '"
-              . $webArgs->{latitude}
-              . "' has unexpected format"
-          )
-          if (
-            defined $webArgs->{latitude}
-            && (   $webArgs->{latitude} !~ m/^[0-9]+([.][0-9]+)?$/
-                || $webArgs->{latitude} < -90
-                || $webArgs->{latitude} > 90 )
-          );
-
-        # validate LONG
-        return (
-            "text/plain; charset=utf-8",
-            "NOK Specified longitude '"
-              . $webArgs->{longitude}
-              . "' has unexpected format"
-          )
-          if (
-            defined $webArgs->{longitude}
-            && (   $webArgs->{longitude} !~ m/^[0-9]+([.][0-9]+)?$/
-                || $webArgs->{longitude} < -180
-                || $webArgs->{longitude} > 180 )
-          );
-
-        # validate device
-        return ( "text/plain; charset=utf-8",
-            "NOK Expected value for 'device' cannot be empty" )
-          if ( !defined( $webArgs->{device} ) || $webArgs->{device} eq "" );
-
-        return (
-            "text/plain; charset=utf-8",
-            "NOK No whitespace allowed in device '" . $webArgs->{device} . "'"
-          )
-          if ( defined( $webArgs->{device} )
-            && $webArgs->{device} =~ m/(?:\s)/ );
-
-        # THINKINGCLEANER.app
-        if ( defined $webArgs->{trigger} ) {
-            $id     = $webArgs->{id};
-            $entry  = $webArgs->{trigger};
-            $lat    = $webArgs->{latitude};
-            $long   = $webArgs->{longitude};
-            $device = $webArgs->{device};
-        }
-
-        # Geofency.app
-        elsif ( defined $webArgs->{entry} ) {
-            $id      = $webArgs->{id};
-            $locName = $webArgs->{name};
-            $entry   = $webArgs->{entry};
-            $date    = $webArgs->{date};
-            $lat     = $webArgs->{latitude};
-            $long    = $webArgs->{longitude};
-            $device  = $webArgs->{device};
-        }
-        else {
-            return "fatal error";
-        }
-    }
-
-    # no data received
-    else {
-        Log3 undef, 3, "THINKINGCLEANER: No data received";
-
-        return ( "text/plain; charset=utf-8", "NOK No data received" );
-    }
-
-    # return error if unknown trigger
-    return ( "text/plain; charset=utf-8", "$entry NOK" )
-      if ( $entry ne "enter"
-        && $entry ne "1"
-        && $entry ne "exit"
-        && $entry ne "0"
-        && $entry ne "test" );
-
-    $hash = $defs{$name};
-
-    # Device alias handling
-    #
-    delete $hash->{helper}{device_aliases}
-      if $hash->{helper}{device_aliases};
-    delete $hash->{helper}{device_names}
-      if $hash->{helper}{device_names};
-
-    if ( defined( $attr{$name}{devAlias} ) ) {
-        my @devices = split( ' ', $attr{$name}{devAlias} );
-
-        if (@devices) {
-            foreach (@devices) {
-                my @device = split( ':', $_ );
-                $hash->{helper}{device_aliases}{ $device[0] } =
-                  $device[1];
-                $hash->{helper}{device_names}{ $device[1] } =
-                  $device[0];
-            }
-        }
-    }
-
-    $device = $hash->{helper}{device_aliases}{$device}
-      if $hash->{helper}{device_aliases}{$device};
-
-    Log3 $name, 4,
-"THINKINGCLEANER $name: id=$id name=$locName entry=$entry date=$date lat=$lat long=$long dev=$device";
-
-    readingsBeginUpdate($hash);
-
-    # validate date
-    if ( $date ne "" ) {
-        $hash->{".updateTime"}      = THINKINGCLEANER_ISO8601UTCtoLocal($date);
-        $hash->{".updateTimestamp"} = FmtDateTime( $hash->{".updateTime"} );
-        $time                       = $hash->{".updateTimestamp"};
-    }
-
-    # use local FHEM time
-    else {
-        $time = TimeNow();
-    }
-
-    # General readings
-    readingsBulkUpdate( $hash, "state",
-"id:$id name:$locName trig:$entry date:$date lat:$lat long:$long dev:$device"
-    );
-
-    $id = $locName if ( defined($locName) && $locName ne "" );
-
-    readingsBulkUpdate( $hash, "lastDevice", $device );
-    readingsBulkUpdate( $hash, "lastArr",    $device . " " . $id )
-      if ( $entry eq "enter" || $entry eq "1" );
-    readingsBulkUpdate( $hash, "lastDep", $device . " " . $id )
-      if ( $entry eq "exit" || $entry eq "0" );
-
-    if ( $entry eq "enter" || $entry eq "1" || $entry eq "test" ) {
-        Log3 $name, 4, "THINKINGCLEANER $name: $device arrived at $id";
-        readingsBulkUpdate( $hash, $device,                  "arrived " . $id );
-        readingsBulkUpdate( $hash, "currLoc_" . $device,     $id );
-        readingsBulkUpdate( $hash, "currLocLat_" . $device,  $lat );
-        readingsBulkUpdate( $hash, "currLocLong_" . $device, $long );
-        readingsBulkUpdate( $hash, "currLocTime_" . $device, $time );
-    }
-    elsif ( $entry eq "exit" || $entry eq "0" ) {
-        my $currReading;
-        my $lastReading;
-
-        Log3 $name, 4, "THINKINGCLEANER $name: $device left $id and is underway";
-
-        # backup last known location if not "underway"
-        $currReading = "currLoc_" . $device;
-        if ( defined( $hash->{READINGS}{$currReading}{VAL} )
-            && $hash->{READINGS}{$currReading}{VAL} ne "underway" )
-        {
-            foreach ( 'Loc', 'LocLat', 'LocLong' ) {
-                $currReading = "curr" . $_ . "_" . $device;
-                $lastReading = "last" . $_ . "_" . $device;
-                readingsBulkUpdate( $hash, $lastReading,
-                    $hash->{READINGS}{$currReading}{VAL} )
-                  if ( defined( $hash->{READINGS}{$currReading}{VAL} ) );
-            }
-            $currReading = "currLocTime_" . $device;
-            readingsBulkUpdate(
-                $hash,
-                "lastLocArr_" . $device,
-                $hash->{READINGS}{$currReading}{VAL}
-            ) if ( defined( $hash->{READINGS}{$currReading}{VAL} ) );
-            readingsBulkUpdate( $hash, "lastLocDep_" . $device, $time );
-        }
-
-        readingsBulkUpdate( $hash, $device,                  "left " . $id );
-        readingsBulkUpdate( $hash, "currLoc_" . $device,     "underway" );
-        readingsBulkUpdate( $hash, "currLocLat_" . $device,  "-" );
-        readingsBulkUpdate( $hash, "currLocLong_" . $device, "-" );
-        readingsBulkUpdate( $hash, "currLocTime_" . $device, $time );
-    }
-
-    readingsEndUpdate( $hash, 1 );
-
-    $msg = "$entry OK";
-    $msg .= "\ndevice=$device id=$id lat=$lat long=$long trig=$entry"
-      if ( $entry eq "test" );
-
+	Log3 "ThinkingCleaner_CLI", 1, "WebHook called";
+    my $msg = "OK";
     return ( "text/plain; charset=utf-8", $msg );
 }
 
