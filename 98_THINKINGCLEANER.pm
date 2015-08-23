@@ -224,155 +224,20 @@ sub THINKINGCLEANER_DoSet($$$)
 #########################################################################
 sub THINKINGCLEANER_Set($@)
 {
-    my ( $hash, @a ) = @_;
-    return "\"set THINKINGCLEANER\" needs at least an argument" if ( @a < 2 );
-    
-    # @a is an array with DeviceName, setName and setVal
-    my ($name, $setName, $setVal) = @a;
-    my (%rmap, $setNum, $setOpt, $setList, $rawVal);
-    $setList = "";
-
-    if (AttrVal($name, "disable", undef)) {
-        Log3 $name, 5, "$name: set called with $setName but device is disabled"
-            if ($setName ne "?");
-        return undef;
-    }
-    
-    Log3 $name, 5, "$name: set called with $setName " . ($setVal ? $setVal : "")
-        if ($setName ne "?");
-
-    if (AttrVal($name, "enableControlSet", undef)) {        # spezielle Sets freigeschaltet?
-        $setList = "interval reread:noArg stop:noArg start:noArg ";
-        if ($setName eq 'interval') {
-            if (int $setVal > 5) {
-                $hash->{Interval} = $setVal;
-                my $nextTrigger = gettimeofday() + $hash->{Interval};
-                RemoveInternalTimer("update:$name");    
-                $hash->{TRIGGERTIME} = $nextTrigger;
-                $hash->{TRIGGERTIME_FMT} = FmtDateTime($nextTrigger);
-                InternalTimer($nextTrigger, "THINKINGCLEANER_GetUpdate", $name, 0);
-                Log3 $name, 3, "$name: timer interval changed to $hash->{Interval} seconds";
-                return undef;
-            } elsif (int $setVal <= 5) {
-                Log3 $name, 3, "$name: interval $setVal (sec) to small (must be >5), continuing with $hash->{Interval} (sec)";
-            } else {
-                Log3 $name, 3, "$name: no interval (sec) specified in set, continuing with $hash->{Interval} (sec)";
-            }
-        } elsif ($setName eq 'reread') {
-            THINKINGCLEANER_GetUpdate($name);
-            return undef;
-        } elsif ($setName eq 'stop') {
-            RemoveInternalTimer($name);    
-            $hash->{TRIGGERTIME} = 0;
-            $hash->{TRIGGERTIME_FMT} = "";
-            Log3 $name, 3, "$name: internal interval timer stopped";
-            return undef;
-        } elsif ($setName eq 'start') {
-            my $nextTrigger = gettimeofday() + $hash->{Interval};
-            $hash->{TRIGGERTIME} = $nextTrigger;
-            $hash->{TRIGGERTIME_FMT} = FmtDateTime($nextTrigger);
-            RemoveInternalTimer("update:$name");
-            InternalTimer($nextTrigger, "THINKINGCLEANER_GetUpdate", $name, 0);
-            Log3 $name, 5, "$name: internal interval timer set to call GetUpdate in " . int($hash->{Interval}). " seconds";
-            return undef;
-        } 
-    }
-        
-    # verarbeite Attribute "set[0-9]*Name  set[0-9]*URL  set[0-9]*Data.*  set[0-9]*Header.* 
-    # set[0-9]*Min  set[0-9]*Max  set[0-9]*Map  set[0-9]*Expr   set[0-9]*Hint
-    
-    # Vorbereitung:
-    # suche den übergebenen setName in den Attributen, setze setNum und erzeuge rmap falls gefunden
-    foreach my $aName (keys %{$attr{$name}}) {
-        if ($aName =~ "set([0-9]+)Name") {      # ist das Attribut ein "setXName" ?
-            my $setI  = $1;                     # merke die Nummer im Namen
-            my $iName = $attr{$name}{$aName};   # Name der Set-Option diser Schleifen-Iteration
-            
-            if ($setName eq $iName) {           # ist es der im konkreten Set verwendete setName?
-                $setNum = $setI;                # gefunden -> merke Nummer X im Attribut
-            }
-            
-            # erzeuge setOpt für die Rückgabe bei set X ?
-            if (AttrVal($name, "set${setI}Map", undef)) {               # nochmal: gibt es eine Map (für Hint)
-                my $hint = AttrVal($name, "set${setI}Map", undef);      # create hint from map
-                $hint =~ s/([^ ,\$]+):([^ ,\$]+,?) ?/$2/g;
-                $setOpt = $iName . ":$hint";                            # setOpt ist Name:Hint (aus Map)
-            } else {
-                $setOpt = $iName;                                       # nur den Namen für setopt verwenden.
-            }
-            if (AttrVal($name, "set${setI}Hint", undef)) {              # gibt es einen expliziten Hint?
-                $setOpt = $iName . ":" . 
-                AttrVal($name, "set${setI}Hint", undef);
-            }
-            $setList .= $setOpt . " ";      # speichere Liste mit allen Sets inkl. der Hints nach ":" für Rückgabe bei Set ?
-        }
-    }
-    
-    # gültiger set Aufruf? ($setNum oben schon gesetzt?)
-    if(!defined ($setNum)) {
-        return "Unknown argument $setName, choose one of $setList";
-    } 
-    Log3 $name, 5, "$name: set found option $setName in attribute set${setNum}Name";
-
-    if (!AttrVal($name, "set${setNum}NoArg", undef)) {      # soll überhaupt ein Wert übergeben werden?
-        if (!defined($setVal)) {                            # Ist ein Wert übergeben?
-            Log3 $name, 3, "$name: set without value given for $setName";
-            return "no value given to set $setName";
-        }
-
-        # Eingabevalidierung von Sets mit Definition per Attributen
-        # 1. Schritt, falls definiert, per Umkehrung der Map umwandeln (z.B. Text in numerische Codes)
-        if (AttrVal($name, "set${setNum}Map", undef)) {     # gibt es eine Map?
-            my $rm = AttrVal($name, "set${setNum}Map", undef);
-            #$rm =~ s/([^ ,\$]+):([^ ,\$]+),? ?/$2 $1 /g;           # reverse map string erzeugen
-            $rm =~ s/([^, ][^,\$]*):([^, ][^,\$]*),? ?/$2:$1, /g;   # reverse map string erzeugen
-            %rmap = split (/, +|:/, $rm);                           # reverse hash aus dem reverse string                   
-            if (defined($rmap{$setVal})) {                  # Eintrag für den übergebenen Wert in der Map?
-                $rawVal = $rmap{$setVal};                   # entsprechender Raw-Wert für das Gerät
-                Log3 $name, 5, "$name: set found $setVal in rmap and converted to $rawVal";
-            } else {
-                Log3 $name, 3, "$name: set value $setVal did not match defined map";
-                return "set value $setVal did not match defined map";
-            }
-        } else {
-          # wenn keine map, dann wenigstens sicherstellen, dass Wert numerisch.
-          if ($setVal !~ /^-?\d+\.?\d*$/) {
-            Log3 $name, 3, "$name: set - value $setVal is not numeric";
-            return "set value $setVal is not numeric";
-          }
-          $rawVal = $setVal;
-        }
-        
-        # 2. Schritt: falls definiert Min- und Max-Werte prüfen
-        if (AttrVal($name, "set${setNum}Min", undef)) {
-            my $min = AttrVal($name, "set${setNum}Min", undef);
-            Log3 $name, 5, "$name: is checking value $rawVal against min $min";
-            return "set value $rawVal is smaller than Min ($min)"
-                if ($rawVal < $min);
-        }
-        if (AttrVal($name, "set${setNum}Max", undef)) {
-            my $max = AttrVal($name, "set${setNum}Max", undef);
-            Log3 $name, 5, "$name: set is checking value $rawVal against max $max";
-            return "set value $rawVal is bigger than Max ($max)"
-                if ($rawVal > $max);
-        }
-
-        # 3. Schritt: Konvertiere mit setexpr falls definiert
-        if (AttrVal($name, "set${setNum}Expr", undef)) {
-            my $val = $rawVal;
-            my $exp = AttrVal($name, "set${setNum}Expr", undef);
-            $rawVal = eval($exp);
-            Log3 $name, 5, "$name: set converted value $val to $rawVal using expr $exp";
-        }
-        
-        Log3 $name, 4, "$name: set will now set $setName -> $rawVal";
-        my $result = THINKINGCLEANER_DoSet($hash, $setNum, $rawVal);
-        return "$setName -> $rawVal";
-    } else {
-        Log3 $name, 4, "$name: set will now set $setName";
-        THINKINGCLEANER_DoSet($hash, $setNum, 0);
-        return $setName;
-    }
+    my ( $hash, @args ) = @_;
+    return "\"set THINKINGCLEANER\" needs at least an argument" if ( @args < 2 );
+    print Dumper($hash);
+		print Dumper(@args);
+    if ($args[1] eq 'clean') {
+			THINKINGCLEANER_AddToQueue($hash, $hash->{'MainURL'}."/command.json?command=".$args[1], undef, undef, undef)
+		} elsif ($args[1] eq 'spot') {
+			THINKINGCLEANER_AddToQueue($hash, $hash->{'MainURL'}."/command.json?command=".$args[1], undef, undef, undef)
+		} elsif ($args[1] eq 'dock') {
+			THINKINGCLEANER_AddToQueue($hash, $hash->{'MainURL'}."/command.json?command=".$args[1], undef, undef, undef)
+		} else {
+	        return "clean:noArg dock:noArg spot:noArg";
+	  }
+	    return undef;
     
 }
 
@@ -499,7 +364,7 @@ sub THINKINGCLEANER_GetUpdate($)
     my ($url, $header, $data, $type, $count);
     my $now = gettimeofday();
     
-    Log3 $name, 1, "$name: GetUpdate called";
+    Log3 $name, 3, "$name: GetUpdate called";
     
     if ( $hash->{Interval}) {
         RemoveInternalTimer ($name);
@@ -563,10 +428,11 @@ sub THINKINGCLEANER_Read($$$)
     
     $hash->{BUSY} = 0;
     RemoveInternalTimer ($hash); # Remove remaining timeouts of HttpUtils (should be done in HttpUtils)
-    
-	my $perl_scalar = decode_json $buffer;
+    eval {
+		my $perl_scalar = decode_json $buffer;
+    	readingsBeginUpdate($hash);
 
-    for my $key ( keys $perl_scalar ) {
+    	for my $key ( keys $perl_scalar ) {
 			my $value = $perl_scalar->{$key};
 			if (ref($value) eq "HASH") {
 				for my $subkey ( keys $value ) {
@@ -577,9 +443,16 @@ sub THINKINGCLEANER_Read($$$)
 			} else {
 				readingsBulkUpdate( $hash, $key, $value );
 			}
+		}
+		readingsEndUpdate($hash,1);
+		return undef;
+    
+	} or do {
+	  	my $e = $@;
+	  	print "$e\n";
+		return undef;
 	}
     
-    return undef;
 }
 
 
@@ -661,8 +534,7 @@ THINKINGCLEANER_HandleSendQueue($)
 
 
 #####################################
-sub
-THINKINGCLEANER_AddToQueue($$$$$;$$$){
+sub THINKINGCLEANER_AddToQueue($$$$$;$$$){
     my ($hash, $url, $header, $data, $type, $count, $ignoreredirects, $prio) = @_;
     my $name = $hash->{NAME};
 
@@ -705,7 +577,8 @@ THINKINGCLEANER_AddToQueue($$$$$;$$$){
 
 ###################################
 sub THINKINGCLEANER_CGI() {
-
+    THINKINGCLEANER_GetUpdate("roomba");
+    
 	Log3 "ThinkingCleaner_CLI", 1, "WebHook called";
     my $msg = "OK";
     return ( "text/plain; charset=utf-8", $msg );
