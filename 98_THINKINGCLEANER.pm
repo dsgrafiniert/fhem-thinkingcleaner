@@ -226,8 +226,7 @@ sub THINKINGCLEANER_Set($@)
 {
     my ( $hash, @args ) = @_;
     return "\"set THINKINGCLEANER\" needs at least an argument" if ( @args < 2 );
-    print Dumper($hash);
-		print Dumper(@args);
+
     if ($args[1] eq 'clean') {
 			THINKINGCLEANER_AddToQueue($hash, $hash->{'MainURL'}."/command.json?command=".$args[1], undef, undef, undef)
 		} elsif ($args[1] eq 'spot') {
@@ -364,7 +363,6 @@ sub THINKINGCLEANER_GetUpdate($)
     my ($url, $header, $data, $type, $count);
     my $now = gettimeofday();
     
-    Log3 $name, 3, "$name: GetUpdate called";
     
     if ( $hash->{Interval}) {
         RemoveInternalTimer ($name);
@@ -437,11 +435,14 @@ sub THINKINGCLEANER_Read($$$)
 			if (ref($value) eq "HASH") {
 				for my $subkey ( keys $value ) {
 					my $subvalue = $value->{$subkey};
-					readingsBulkUpdate( $hash, $key."_".$subkey, $subvalue );
-
+					if (!(exists $hash->{READINGS}->{$key."_".$subkey}) || ($hash->{READINGS}->{$key."_".$subkey}->{VAL} ne $subvalue)){						
+						readingsBulkUpdate( $hash, $key."_".$subkey, $subvalue );
+					} 
 				}
 			} else {
-				readingsBulkUpdate( $hash, $key, $value );
+				if (!(exists $hash->{READINGS}->{$key}) || ($hash->{READINGS}->{$key}->{VAL} ne $value)){
+					readingsBulkUpdate( $hash, $key, $value );
+				} 
 			}
 		}
 		readingsEndUpdate($hash,1);
@@ -449,7 +450,6 @@ sub THINKINGCLEANER_Read($$$)
     
 	} or do {
 	  	my $e = $@;
-	  	print "$e\n";
 		return undef;
 	}
     
