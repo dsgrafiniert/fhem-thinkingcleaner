@@ -435,8 +435,17 @@ sub THINKINGCLEANER_Read($$$)
 			if (ref($value) eq "HASH") {
 				for my $subkey ( keys $value ) {
 					my $subvalue = $value->{$subkey};
-					if (!(exists $hash->{READINGS}->{$key."_".$subkey}) || ($hash->{READINGS}->{$key."_".$subkey}->{VAL} ne $subvalue)){						
+					if (!(exists $hash->{READINGS}->{$key."_".$subkey}) || ($hash->{READINGS}->{$key."_".$subkey}->{VAL} ne $subvalue)){	
+						if ($key eq "tc_status" && $subkey eq "cleaning_distance"){
+							my $relVal = $hash->{READINGS}->{"tc_status_cleaning_dist_rel"}->{VAL};
+							$relVal = $relVal + $subvalue- $hash->{READINGS}->{"tc_status_cleaning_distance"}->{VAL};
+							readingsBulkUpdate( $hash, "tc_status_cleaning_dist_rel",  $relVal);
+						}					
 						readingsBulkUpdate( $hash, $key."_".$subkey, $subvalue );
+						if ($key eq "power_status" && $subkey eq "cleaner_state" && substr($subvalue, 0, 7) eq "st_base"){
+							readingsBulkUpdate( $hash, "tc_status_cleaning_dist_rel", 0);
+						}
+						
 					} 
 				}
 			} else {
