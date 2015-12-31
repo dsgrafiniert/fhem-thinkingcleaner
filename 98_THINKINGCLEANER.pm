@@ -1,6 +1,6 @@
 #########################################################################
 # $Id: 98_THINKINGCLEANER.pm 1 2015-08-19 18:21:59Z d.schoen $
-# fhem Modul für ThinkingCleaner
+# fhem Modul fÃ¼r ThinkingCleaner
 #   
 #     This file is part of fhem.
 # 
@@ -227,15 +227,12 @@ sub THINKINGCLEANER_Set($@)
     my ( $hash, @args ) = @_;
     return "\"set THINKINGCLEANER\" needs at least an argument" if ( @args < 2 );
 
-    if ($args[1] eq 'clean') {
-			THINKINGCLEANER_AddToQueue($hash, $hash->{'MainURL'}."/command.json?command=".$args[1], undef, undef, undef)
-		} elsif ($args[1] eq 'spot') {
-			THINKINGCLEANER_AddToQueue($hash, $hash->{'MainURL'}."/command.json?command=".$args[1], undef, undef, undef)
-		} elsif ($args[1] eq 'dock') {
+	if ($args[1] =~ /\bclean\b|\bdock\b|\bspot\b|\bmax\b|\bfind_me\b|\bleavehomebase\b|\bdrivestop\b|\bpoweroff\b/) {
 			THINKINGCLEANER_AddToQueue($hash, $hash->{'MainURL'}."/command.json?command=".$args[1], undef, undef, undef)
 		} else {
-	        return "clean:noArg dock:noArg spot:noArg";
-	  }
+	        return "clean:noArg dock:noArg spot:noArg max:noArg find_me:noArg leavehomebase:noArg drivestop:noArg poweroff:noArg";
+	  };
+	
 	    return undef;
     
 }
@@ -327,7 +324,7 @@ sub THINKINGCLEANER_Get($@)
     # verarbeite Attribute "get[0-9]*Name  get[0-9]*URL  get[0-9]*Data.*  get[0-9]*Header.* 
     
     # Vorbereitung:
-    # suche den übergebenen getName in den Attributen, setze getNum falls gefunden
+    # suche den Ã¼bergebenen getName in den Attributen, setze getNum falls gefunden
     foreach my $aName (keys %{$attr{$name}}) {
         if ($aName =~ "get([0-9]+)Name") {      # ist das Attribut ein "getXName" ?
             my $getI  = $1;                     # merke die Nummer im Namen
@@ -336,11 +333,11 @@ sub THINKINGCLEANER_Get($@)
             if ($getName eq $iName) {           # ist es der im konkreten get verwendete getName?
                 $getNum = $getI;                # gefunden -> merke Nummer X im Attribut
             }
-            $getList .= $iName . " ";           # speichere Liste mit allen gets für Rückgabe bei get ?
+            $getList .= $iName . " ";           # speichere Liste mit allen gets fÃ¼r RÃ¼ckgabe bei get ?
         }
     }
     
-    # gültiger get Aufruf? ($getNum oben schon gesetzt?)
+    # gÃ¼ltiger get Aufruf? ($getNum oben schon gesetzt?)
     if(!defined ($getNum)) {
         return "Unknown argument $getName, choose one of $getList";
     } 
