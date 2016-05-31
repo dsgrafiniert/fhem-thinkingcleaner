@@ -428,11 +428,11 @@ sub THINKINGCLEANER_Read($$$)
     $hash->{BUSY} = 0;
     RemoveInternalTimer ($hash); # Remove remaining timeouts of HttpUtils (should be done in HttpUtils)
     eval {
-        Log3 $name, 5, "Buffer: $buffer";      
-	my $perl_scalar = decode_json $buffer;
+      Log3 $name, 5, "Buffer: $buffer";      
+			my $perl_scalar = decode_json $buffer;
     	readingsBeginUpdate($hash);
 
-    	for my $key ( keys $perl_scalar ) {
+    	for my $key ( keys %$perl_scalar ) {
 			my $value = $perl_scalar->{$key};
 			if (ref($value) eq "HASH") {
 				for my $subkey ( keys $value ) {
