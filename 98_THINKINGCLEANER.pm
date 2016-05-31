@@ -61,13 +61,14 @@ sub THINKINGCLEANER_Initialize($)
 }
 
 #########################
-sub THINKINGCLEANER_addExtension($$) {
-    my ( $name, $func ) = @_;
+sub THINKINGCLEANER_addExtension($$$) {
+    my ( $name, $func, $link ) = @_;
 
-    my $url = "/$name";
-    Log3 $name, 1, "Registering THINKINGCLEANER WebHook $name ";
+    my $url = "/$link";
+    Log3 $name, 2, "Registering THINKINGCLEANER $name for URL $url...";
     $data{FWEXT}{$url}{deviceName} = $name;
     $data{FWEXT}{$url}{FUNC}       = $func;
+    $data{FWEXT}{$url}{LINK}       = $link;
 }
 
 #########################
@@ -76,7 +77,7 @@ sub THINKINGCLEANER_removeExtension($) {
 
     my $url  = "/$link";
     my $name = $data{FWEXT}{$url}{deviceName};
-    Log3 $name, 1, "Unregistering THINKINGCLEANER WebHook $name ";
+    Log3 $name, 2, "Unregistering THINKINGCLEANER $name for URL $url...";
     delete $data{FWEXT}{$url};
 }
 
@@ -94,10 +95,12 @@ sub THINKINGCLEANER_Define($$)
     return "wrong syntax: define <name> THINKINGCLEANER URL interval"
       if ( @a < 3 );
     my $name    = $a[0];
+    my $infix = $name;
+
 
     $hash->{fhem}{tc_infix} = $name;
 
-    THINKINGCLEANER_addExtension( $name, "THINKINGCLEANER_CGI" );
+    THINKINGCLEANER_addExtension( $name, "THINKINGCLEANER_CGI", $infix  );
 
     if ($a[2] eq "none") {
         Log3 $name, 3, "$name: URL is none, no periodic updates will be limited to explicit GetXXPoll attribues (if defined)";
@@ -383,6 +386,7 @@ sub THINKINGCLEANER_GetUpdate($)
         
         # queue main get request 
         if ($url) {
+					Log3 $name, 1, "GetUpdate";
             THINKINGCLEANER_AddToQueue($hash, $url."/full_status.json", $header, $data, $type); 
         } else {
             Log3 $name, 3, "$name: no URL for $type";
@@ -424,7 +428,8 @@ sub THINKINGCLEANER_Read($$$)
     $hash->{BUSY} = 0;
     RemoveInternalTimer ($hash); # Remove remaining timeouts of HttpUtils (should be done in HttpUtils)
     eval {
-		my $perl_scalar = decode_json $buffer;
+        Log3 $name, 5, "Buffer: $buffer";      
+	my $perl_scalar = decode_json $buffer;
     	readingsBeginUpdate($hash);
 
     	for my $key ( keys $perl_scalar ) {
@@ -586,6 +591,7 @@ sub THINKINGCLEANER_CGI() {
     THINKINGCLEANER_GetUpdate("roomba");
     
 	Log3 "ThinkingCleaner_CLI", 1, "WebHook called";
+	
     my $msg = "OK";
     return ( "text/plain; charset=utf-8", $msg );
 }
