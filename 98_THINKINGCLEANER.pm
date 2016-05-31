@@ -435,7 +435,7 @@ sub THINKINGCLEANER_Read($$$)
     	for my $key ( keys %$perl_scalar ) {
 			my $value = $perl_scalar->{$key};
 			if (ref($value) eq "HASH") {
-				for my $subkey ( keys $value ) {
+				for my $subkey ( keys %$value ) {
 					my $subvalue = $value->{$subkey};
 					if (!(exists $hash->{READINGS}->{$key."_".$subkey}) || ($hash->{READINGS}->{$key."_".$subkey}->{VAL} ne $subvalue)){	
 						if ($key eq "tc_status" && $subkey eq "cleaning_distance"){
